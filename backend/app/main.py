@@ -1,45 +1,54 @@
 import os
+import httpx
 
-from pathlib import Path
-from dotenv import load_dotenv
+RESEND_URL = "https://api.resend.com/emails"
 
-load_dotenv() 
-ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+def _text(payload: dict) -> str:
+    lines = [
+        "New order",
+        f"Name: {payload.get('name') or '-'}",
+        f"Email: {payload['email']}",
+        f"Note: {payload.get('note') or '-'}",
+        "Items:",
+    ]
+    for it in payload["items"]:
+        lines.append(f"• {it['id']} x {it['qty']}")
+    return "\n".join(lines)
 
+def _html(payload: dict) -> str:
+    items = "".join([f"<li>{it['id']} × {it['qty']}</li>" for it in payload["items"]])
+    return f"""
+    <div style="font-family:ui-sans-serif,system-ui">
+      <h2>🛒 New order received</h2>
+      <p><b>Name:</b> {payload.get('name') or '-'}</p>
+      <p><b>Email:</b> {payload['email']}</p>
+      <p><b>Note:</b> {payload.get('note') or '-'}</p>
+      <p><b>Items:</b></p>
+      <ul>{items}</ul>
+      <hr/>
+      <small>Sent automatically by Mini Shop</small>
+    </div>
+    """
 
-from fastapi import FastAPI, HTTPException
+async def send_email(payload: dict):
+    api_key = os.getenv("RESEND_API_KEY")
+    to = os.getenv("ADMIN_EMAIL")
+    from_addr = os.getenv("FROM_EMAIL", "orders@resend.dev")
+    if not api_key or not to:
+        raise RuntimeError("Missing RESEND_API_KEY or ADMIN_EMAIL")
 
-from fastapi.middleware.cors import CORSMiddleware
-from .schemas.order import OrderCreate, OrderItem
-from .services.emailer import send_email
-
-app = FastAPI(title="Mini Shop B.E", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],    
-    allow_credentials=False,
-    allow_methods=["POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def health():
-    return {
-        "ok": True,
-        "service": "mini-be",
-        "env": ("prod" if os.getenv("ENV") == "prod" else "dev"),
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "from": from_addr,
+        "to": to,
+        "subject": "New order received",
+        "text": _text(payload),
+        "html": _html(payload),
     }
 
-@app.post("/order")
-async def create_order(order: OrderCreate):
-    data = order.model_dump()  # chuyển sang dict
-    email_ok = send_email(data)
-
-    # Đừng chặn FE bằng 500 khi email lỗi—trả trạng thái để FE biết
-    return {
-        "message": "Order received" + ("" if email_ok else " (email failed)"),
-        "email_sent": email_ok,
-    }
-
-print("ENV_PATH =", ENV_PATH)   
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(RESEND_URL, headers=headers, json=data)
+        resp.raise_for_status()
