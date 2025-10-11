@@ -45,7 +45,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://sales-web-jet.vercel.app/",  
+        "https://sales-web-jet.vercel.app",  
     ],
     allow_methods=["*"], 
     allow_headers=["*"],  
