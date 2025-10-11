@@ -1,3 +1,8 @@
+"use client";
+import { useState } from "react";
+import { sendOrder } from "@/lib/api";
+
+
 export default function Page() {
   return (
     <div className="min-h-screen bg-white text-gray-900">
@@ -105,39 +110,13 @@ export default function Page() {
         <ProductGrid prefix="new"/>
       </Section>
 
-      {/* Promo banner ngang */}
-      <section className="max-w-6xl mx-auto px-4 md:px-6 mt-12">
-        <div className="relative rounded-2xl overflow-hidden">
-          <div className="aspect-[16/4]">
-            <img src="/images/promo.jpg" alt="Ưu đãi" className="w-full h-full object-cover"/>
-          </div>
-          <div className="absolute inset-0 bg-pink-600/10"/>
-          <div className="absolute left-6 top-1/2 -translate-y-1/2">
-            <h4 className="text-2xl md:text-3xl font-bold">Combo dưỡng ẩm -15%</h4>
-            <p className="text-sm opacity-80 mt-1">Da căng mướt cả ngày • Số lượng có hạn</p>
-          </div>
-        </div>
-      </section>
+
 
       {/* Section: Bán chạy */}
       <Section title="Bán chạy">
         <ProductGrid prefix="best"/>
       </Section>
 
-      {/* Instagram (mock) */}
-      <section className="max-w-6xl mx-auto px-4 md:px-6 mt-12">
-        <div className="flex items-end justify-between mb-4">
-          <h3 className="text-xl md:text-2xl font-bold">Instagram</h3>
-          <a href="#" className="text-sm hover:text-pink-600">Xem thêm →</a>
-        </div>
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-          {Array.from({length:12}).map((_,i)=>(
-            <div key={i} className="aspect-square rounded-xl overflow-hidden">
-              <img src={`/images/prod-${(i%4)+1}.jpg`} alt="" className="w-full h-full object-cover"/>
-            </div>
-          ))}
-        </div>
-      </section>
 
       {/* Footer */}
       <footer className="mt-14 border-t">
@@ -174,41 +153,53 @@ function Section({ title, id, children }: { title: string; id?: string; children
 }
 
 function ProductGrid({ prefix }: { prefix: string }) {
-  const items = Array.from({ length: 8 }).map((_, i) => ({
-    id: `${prefix}-${i + 1}`,
-    name: `Sản phẩm ${i + 1}`,
-    price: 99000 + i * 10000,
-    img: `/images/prod-${(i % 4) + 1}.jpg`,
-    badge: i % 3 === 0 ? "NEW" : i % 5 === 0 ? "-15%" : null,
-  }));
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  // DÙNG ảnh trong /public/images, KHÔNG ghép prefix vào đường dẫn ảnh
+  const items = [
+    { id: "p1", name: "Serum", price: "299k", image: `/images/prod-1.jpg` },
+    { id: "p2", name: "Kem dưỡng", price: "350k", image: `/images/prod-2.jpg` },
+    { id: "p3", name: "Sữa rửa mặt", price: "199k", image: `/images/prod-3.jpg` },
+    { id: "p4", name: "Tẩy trang", price: "259k", image: `/images/prod-4.jpg` },
+  ];
+
+  async function handleQuickOrder(p: { id: string; name: string }) {
+    setLoadingId(p.id);
+    const ok = await sendOrder({
+      email: "customer@example.com", // tạm test cứng
+      name: "Demo User",
+      note: `Quick order for ${p.name}`,
+      items: [{ id: p.id, qty: 1 }],
+    });
+    setLoadingId(null);
+    alert(ok ? "✅ Đặt hàng thành công" : "❌ Gửi đơn thất bại");
+  }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 p-4">
       {items.map((p) => (
-        <a key={p.id} href="#" className="group border rounded-2xl overflow-hidden hover:shadow-sm transition">
-          <div className="relative">
-            <div className="aspect-[4/5]">
-              <img src={p.img} alt={p.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"/>
-            </div>
-            {p.badge && (
-              <span className="absolute left-2 top-2 text-xs bg-white/90 backdrop-blur px-2 py-0.5 rounded-full">{p.badge}</span>
-            )}
-          </div>
+        <div
+          key={p.id}
+          className="group border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition"
+        >
+          <img src={p.image} alt={p.name} className="w-full object-cover" />
           <div className="p-3">
-            <h4 className="text-sm font-medium line-clamp-2 min-h-[2.5rem]">{p.name}</h4>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="font-semibold">{(p.price / 1000).toFixed(0)}k</span>
-              {p.badge?.includes("-") && (
-                <span className="text-xs text-gray-500 line-through">{((p.price * 100) / 85 / 1000).toFixed(0)}k</span>
-              )}
-            </div>
-            <button className="mt-3 w-full text-sm border rounded-full py-2 hover:bg-gray-50">Thêm vào giỏ</button>
+            <p className="font-medium">{p.name}</p>
+            <p className="text-pink-600 font-semibold">{p.price}</p>
+            <button
+              onClick={() => handleQuickOrder(p)}
+              disabled={loadingId === p.id}
+              className="mt-3 w-full border border-pink-500 text-pink-600 rounded-full py-2 hover:bg-pink-50 disabled:opacity-50"
+            >
+              {loadingId === p.id ? "Đang gửi..." : "Đặt hàng"}
+            </button>
           </div>
-        </a>
+        </div>
       ))}
     </div>
   );
 }
+
 
 function FooterCol({ title, items }: { title: string; items: string[] }) {
   return (
