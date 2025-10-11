@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 from app.services.emailer import send_email
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-# Không lỗi nếu thiếu file .env (still returns False), env từ hệ thống vẫn được dùng.
+
 load_dotenv(dotenv_path=ENV_PATH)
 
 logging.basicConfig(
@@ -43,11 +43,14 @@ FRONTEND_ORIGINS = [o for o in FRONTEND_ORIGINS if o]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_ORIGINS or ["*"],  # dev: mở; prod: nên chỉ định domain
-    allow_credentials=False,
-    allow_methods=["POST", "OPTIONS", "GET"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://sales-web-jet.vercel.app/",  
+    ],
+    allow_methods=["*"], 
+    allow_headers=["*"],  
 )
+
 
 # -----------------------------------------------------------------------------
 # Healthcheck
