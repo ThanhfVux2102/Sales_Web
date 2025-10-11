@@ -33,23 +33,17 @@ class OrderCreate(BaseModel):
 
 app = FastAPI(title="Mini Shop B.E", version="0.1.0")
 
-# CORS (dev cho phép localhost:3000; khi deploy hãy khóa domain cụ thể của FE)
-FRONTEND_ORIGINS = [
-    "http://localhost:3000",
-    os.getenv("FRONTEND_URL", ""),   # ví dụ: https://mini-fe.vercel.app
-]
-# loại bỏ chuỗi rỗng để tránh cảnh báo
+
 FRONTEND_ORIGINS = [o for o in FRONTEND_ORIGINS if o]
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://sales-web-jet.vercel.app",  
-    ],
-    allow_methods=["*"], 
+    allow_origins=FRONTEND_ORIGINS,  
+    allow_methods=["*"],  
     allow_headers=["*"],  
 )
+
 
 
 # -----------------------------------------------------------------------------
