@@ -1,61 +1,68 @@
-# app/emailer.py
-from __future__ import annotations
 import os
-import json
-import requests
+import httpx
+from fastapi import HTTPException
 
-def _clean(s: str) -> str:
-    # loại bỏ khoảng trắng/ngoặc/ký tự ẩn
-    return (s or "").strip().strip('"').strip("'").replace("\ufeff", "").replace("\u200b", "")
+RESEND_URL = "https://api.resend.com/emails"
 
-def send_email(payload: dict) -> bool:
-    # ĐỌC ENV NGAY TRONG HÀM (không cache ở cấp module)
-    api_key     = _clean(os.getenv("RESEND_API_KEY"))
-    from_email  = _clean(os.getenv("FROM_EMAIL"))
-    admin_email = _clean(os.getenv("ADMIN_EMAIL"))
+def _text(payload: dict) -> str:
+    """Tạo nội dung email dạng text (backup cho trình mail không hỗ trợ HTML)."""
+    lines = [
+        "🛒 New order received",
+        f"Name: {payload.get('name') or '-'}",
+        f"Email: {payload.get('email') or '-'}",
+        f"Note: {payload.get('note') or '-'}",
+        "",
+        "Items:"
+    ]
+    for it in payload.get("items", []):
+        lines.append(f"• {it['id']} × {it['qty']}")
+    return "\n".join(lines)
 
-    # DEBUG
-    print(
-        "[DEBUG emailer] key:",
-        (api_key[:6] if api_key else None),
-        "...",
-        (api_key[-4:] if api_key else None),
-        "len=", len(api_key or "")
+
+def _html(payload: dict) -> str:
+    """Tạo nội dung email dạng HTML."""
+    items = "".join(
+        [f"<li>{it['id']} × {it['qty']}</li>" for it in payload.get("items", [])]
     )
-    print("[DEBUG emailer] from:", from_email, "| to:", admin_email)
+    return f"""
+    <div style="font-family:ui-sans-serif,system-ui">
+      <h2>🛒 New order received</h2>
+      <p><b>Name:</b> {payload.get('name') or '-'}</p>
+      <p><b>Email:</b> {payload.get('email') or '-'}</p>
+      <p><b>Note:</b> {payload.get('note') or '-'}</p>
+      <p><b>Items:</b></p>
+      <ul>{items}</ul>
+      <hr/>
+      <small>Sent automatically by Mini Shop</small>
+    </div>
+    """
 
-    # Kiểm tra thiếu env
-    missing = [k for k, v in {
-        "RESEND_API_KEY": api_key,
-        "FROM_EMAIL": from_email,
-        "ADMIN_EMAIL": admin_email
-    }.items() if not v]
-    if missing:
-        print("[EMAILER] Missing env:", ", ".join(missing))
-        return False
 
-    # Body tối giản để tránh lỗi render HTML
+async def send_email(payload: dict):
+    """Gửi email thông báo bằng Resend API."""
+    api_key = os.getenv("RESEND_API_KEY")
+    admin_email = os.getenv("ADMIN_EMAIL")
+    from_email = os.getenv("FROM_EMAIL", "orders@resend.dev")
+
+    if not api_key or not admin_email:
+        raise HTTPException(status_code=500, detail="Missing email configuration")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
     body = {
-        "from": from_email,              # ví dụ: "Shop <onboarding@resend.dev>"
-        "to": [admin_email],             # ví dụ: "you@gmail.com"
-        "subject": "New order notification",
-        "text": "New order:\n" + json.dumps(payload, ensure_ascii=False, indent=2),
+        "from": from_email,
+        "to": admin_email,
+        "subject": "🛒 New order received",
+        "text": _text(payload),
+        "html": _html(payload),
     }
 
     try:
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {api_key}",    # <-- dùng biến LOCAL đã clean
-                "Content-Type": "application/json",
-            },
-            json=body,
-            timeout=20,
-        )
-        print("[EMAILER] Resend status:", resp.status_code)
-        print("[EMAILER] Resend resp:", resp.text)
-        resp.raise_for_status()
-        return True
-    except Exception as e:
-        print("[EMAILER] ERROR >>>", repr(e))
-        return False
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(RESEND_URL, headers=headers, json=body)
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=500, detail=f"Email sending failed: {str(e)}")

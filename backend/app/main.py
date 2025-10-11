@@ -1,54 +1,107 @@
+# backend/app/main.py
+from __future__ import annotations
+
 import os
-import httpx
+import logging
+from pathlib import Path
 
-RESEND_URL = "https://api.resend.com/emails"
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field, conint
+from dotenv import load_dotenv
 
-def _text(payload: dict) -> str:
-    lines = [
-        "New order",
-        f"Name: {payload.get('name') or '-'}",
-        f"Email: {payload['email']}",
-        f"Note: {payload.get('note') or '-'}",
-        "Items:",
-    ]
-    for it in payload["items"]:
-        lines.append(f"• {it['id']} x {it['qty']}")
-    return "\n".join(lines)
+from app.services.emailer import send_email
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+# Không lỗi nếu thiếu file .env (still returns False), env từ hệ thống vẫn được dùng.
+load_dotenv(dotenv_path=ENV_PATH)
 
-def _html(payload: dict) -> str:
-    items = "".join([f"<li>{it['id']} × {it['qty']}</li>" for it in payload["items"]])
-    return f"""
-    <div style="font-family:ui-sans-serif,system-ui">
-      <h2>🛒 New order received</h2>
-      <p><b>Name:</b> {payload.get('name') or '-'}</p>
-      <p><b>Email:</b> {payload['email']}</p>
-      <p><b>Note:</b> {payload.get('note') or '-'}</p>
-      <p><b>Items:</b></p>
-      <ul>{items}</ul>
-      <hr/>
-      <small>Sent automatically by Mini Shop</small>
-    </div>
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("mini-be")
+
+class OrderItem(BaseModel):
+    id: str = Field(..., min_length=1)
+    qty: conint(strict=True, gt=0)
+
+class OrderCreate(BaseModel):
+    email: EmailStr
+    name: str | None = None
+    note: str | None = None
+    items: list[OrderItem] = Field(..., min_items=1)
+
+app = FastAPI(title="Mini Shop B.E", version="0.1.0")
+
+# CORS (dev cho phép localhost:3000; khi deploy hãy khóa domain cụ thể của FE)
+FRONTEND_ORIGINS = [
+    "http://localhost:3000",
+    os.getenv("FRONTEND_URL", ""),   # ví dụ: https://mini-fe.vercel.app
+]
+# loại bỏ chuỗi rỗng để tránh cảnh báo
+FRONTEND_ORIGINS = [o for o in FRONTEND_ORIGINS if o]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONTEND_ORIGINS or ["*"],  # dev: mở; prod: nên chỉ định domain
+    allow_credentials=False,
+    allow_methods=["POST", "OPTIONS", "GET"],
+    allow_headers=["*"],
+)
+
+# -----------------------------------------------------------------------------
+# Healthcheck
+# -----------------------------------------------------------------------------
+@app.get("/", summary="Healthcheck")
+def health():
+    return {
+        "ok": True,
+        "service": "mini-be",
+        "env": os.getenv("ENV", "dev"),
+    }
+
+# -----------------------------------------------------------------------------
+# Create Order
+# -----------------------------------------------------------------------------
+@app.post("/order", summary="Create order and notify admin")
+async def create_order(order: OrderCreate):
     """
-
-async def send_email(payload: dict):
-    api_key = os.getenv("RESEND_API_KEY")
-    to = os.getenv("ADMIN_EMAIL")
-    from_addr = os.getenv("FROM_EMAIL", "orders@resend.dev")
-    if not api_key or not to:
-        raise RuntimeError("Missing RESEND_API_KEY or ADMIN_EMAIL")
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
+    Nhận đơn hàng từ FE, gửi email đến ADMIN_EMAIL qua Resend.
+    Body mẫu:
+    {
+      "email": "customer@example.com",
+      "name": "Customer A",
+      "note": "Call me",
+      "items": [{"id": "p1", "qty": 1}]
     }
-    data = {
-        "from": from_addr,
-        "to": to,
-        "subject": "New order received",
-        "text": _text(payload),
-        "html": _html(payload),
+    """
+    payload = {
+        "email": order.email,
+        "name": order.name,
+        "note": order.note,
+        "items": [it.dict() for it in order.items],
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(RESEND_URL, headers=headers, json=data)
-        resp.raise_for_status()
+    # Kiểm tra cấu hình email trước khi gửi
+    if not os.getenv("RESEND_API_KEY") or not os.getenv("ADMIN_EMAIL"):
+        missing = []
+        if not os.getenv("RESEND_API_KEY"):
+            missing.append("RESEND_API_KEY")
+        if not os.getenv("ADMIN_EMAIL"):
+            missing.append("ADMIN_EMAIL")
+        logger.error("Missing email config: %s", ", ".join(missing))
+        raise HTTPException(status_code=500, detail=f"Missing email configuration: {', '.join(missing)}")
+
+    try:
+        await send_email(payload)
+        logger.info("Order emailed to admin: %s", os.getenv("ADMIN_EMAIL"))
+        return {"ok": True, "message": "Order received and email sent!"}
+    except HTTPException as e:
+        # lỗi đã chuẩn hóa từ emailer (httpx error,…)
+        logger.exception("Email send failed (HTTPException): %s", e.detail)
+        raise
+    except Exception as e:
+        logger.exception("Email send failed (Unexpected): %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to send notification")
+
+
