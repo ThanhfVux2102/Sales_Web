@@ -33,7 +33,11 @@ class OrderCreate(BaseModel):
 
 app = FastAPI(title="Mini Shop B.E", version="0.1.0")
 
-
+FRONTEND_ORIGINS = [
+    "http://localhost:3000",  
+    os.getenv("FRONTEND_URL", ""),  
+    "https://sales-web-jet.vercel.app",  
+]
 FRONTEND_ORIGINS = [o for o in FRONTEND_ORIGINS if o]
 
 
